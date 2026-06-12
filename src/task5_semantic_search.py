@@ -9,6 +9,33 @@ Yêu cầu:
     - Phải tương thích với embedding model và vector store ở Task 4
 """
 
+from functools import lru_cache
+from pathlib import Path
+
+from sentence_transformers import SentenceTransformer
+
+try:
+    from .task4_chunking_indexing import EMBEDDING_MODEL
+except ImportError:
+    from task4_chunking_indexing import EMBEDDING_MODEL
+
+
+CHROMA_DIR = Path(__file__).parent.parent / "data" / "chromadb"
+COLLECTION_NAME = "DrugLawDocs"
+
+
+@lru_cache(maxsize=1)
+def _get_model():
+    return SentenceTransformer(EMBEDDING_MODEL)
+
+
+@lru_cache(maxsize=1)
+def _get_collection():
+    import chromadb
+
+    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    return client.get_collection(COLLECTION_NAME)
+
 
 def semantic_search(query: str, top_k: int = 10) -> list[dict]:
     """
@@ -26,37 +53,31 @@ def semantic_search(query: str, top_k: int = 10) -> list[dict]:
         }
         Sorted by score descending.
     """
-    # TODO: Implement semantic search
-    #
-    # Bước 1: Embed query bằng cùng model ở Task 4
-    # Bước 2: Query vector store (cosine similarity)
-    # Bước 3: Return top_k results
-    #
-    # Ví dụ với Weaviate:
-    # import weaviate
-    # from sentence_transformers import SentenceTransformer
-    #
-    # model = SentenceTransformer("BAAI/bge-m3")
-    # query_embedding = model.encode(query).tolist()
-    #
-    # client = weaviate.connect_to_local()
-    # collection = client.collections.get("DrugLawDocs")
-    #
-    # results = collection.query.near_vector(
-    #     near_vector=query_embedding,
-    #     limit=top_k,
-    #     return_metadata=MetadataQuery(distance=True)
-    # )
-    #
-    # return [
-    #     {
-    #         "content": obj.properties["content"],
-    #         "score": 1 - obj.metadata.distance,  # distance → similarity
-    #         "metadata": {"source": obj.properties["source"], ...}
-    #     }
-    #     for obj in results.objects
-    # ]
-    raise NotImplementedError("Implement semantic_search")
+    if top_k <= 0:
+        return []
+
+    query_embedding = _get_model().encode(query).tolist()
+    results = _get_collection().query(
+        query_embeddings=[query_embedding],
+        n_results=top_k,
+        include=["documents", "metadatas", "distances"],
+    )
+
+    documents = results.get("documents", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+
+    hits = [
+        {
+            "content": content,
+            "score": 1.0 - float(distance),
+            "metadata": metadata or {},
+        }
+        for content, metadata, distance in zip(documents, metadatas, distances)
+    ]
+    hits.sort(key=lambda item: item["score"], reverse=True)
+    return hits
+
 
 
 if __name__ == "__main__":

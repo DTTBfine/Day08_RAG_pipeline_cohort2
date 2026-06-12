@@ -1,0 +1,46 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+temp/
+
+# Pipeline-generated data
+data/chromadb/
+data/landing/legal/*
+data/landing/news/*
+data/standardized/*
+!data/landing/legal/.gitkeep
+!data/landing/news/.gitkeep
+!data/standardized/.gitkeep
+

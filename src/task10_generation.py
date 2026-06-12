@@ -10,11 +10,14 @@ Hướng dẫn:
 """
 
 import os
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv():
+        return False
 
 load_dotenv()
-
-from .task9_retrieval_pipeline import retrieve
 
 
 # =============================================================================
@@ -75,20 +78,17 @@ def reorder_for_llm(chunks: list[dict]) -> list[dict]:
     Returns:
         List reordered để maximize LLM attention.
     """
-    # TODO: Implement reordering
-    #
-    # if len(chunks) <= 2:
-    #     return chunks
-    #
-    # # Split into first half (important → đầu) and second half (important → cuối)
-    # reordered = []
-    # for i in range(0, len(chunks), 2):
-    #     reordered.append(chunks[i])  # Odd positions go first
-    # for i in range(len(chunks) - 1 - (len(chunks) % 2 == 0), 0, -2):
-    #     reordered.append(chunks[i])  # Even positions go last (reversed)
-    #
-    # return reordered
-    raise NotImplementedError("Implement reorder_for_llm")
+    if len(chunks) <= 2:
+        return chunks
+
+    reordered = []
+    for i in range(0, len(chunks), 2):
+        reordered.append(chunks[i])
+    last_odd_index = len(chunks) - 2 if len(chunks) % 2 else len(chunks) - 1
+    for i in range(last_odd_index, 0, -2):
+        reordered.append(chunks[i])
+
+    return reordered
 
 
 # =============================================================================
@@ -106,18 +106,16 @@ def format_context(chunks: list[dict]) -> str:
     Returns:
         Formatted context string.
     """
-    # TODO: Implement context formatting
-    #
-    # context_parts = []
-    # for i, chunk in enumerate(chunks, 1):
-    #     source = chunk.get("metadata", {}).get("source", f"Source {i}")
-    #     doc_type = chunk.get("metadata", {}).get("type", "unknown")
-    #     context_parts.append(
-    #         f"[Document {i} | Source: {source} | Type: {doc_type}]\n"
-    #         f"{chunk['content']}\n"
-    #     )
-    # return "\n---\n".join(context_parts)
-    raise NotImplementedError("Implement format_context")
+    context_parts = []
+    for i, chunk in enumerate(chunks, 1):
+        metadata = chunk.get("metadata", {})
+        source = metadata.get("source", f"Source {i}")
+        doc_type = metadata.get("type", metadata.get("doc_type", "unknown"))
+        context_parts.append(
+            f"[Document {i} | Source: {source} | Type: {doc_type}]\n"
+            f"{chunk['content']}\n"
+        )
+    return "\n---\n".join(context_parts)
 
 
 # =============================================================================
@@ -146,43 +144,66 @@ def generate_with_citation(query: str, top_k: int = TOP_K) -> dict:
             'retrieval_source': str  # 'hybrid' hoặc 'pageindex'
         }
     """
-    # TODO: Implement generation pipeline
-    #
-    # # Step 1: Retrieve
-    # chunks = retrieve(query, top_k=top_k)
-    #
-    # # Step 2: Reorder
-    # reordered = reorder_for_llm(chunks)
-    #
-    # # Step 3: Format context
-    # context = format_context(reordered)
-    #
-    # # Step 4: Build prompt
-    # user_message = f"""Context:\n{context}\n\n---\n\nQuestion: {query}"""
-    #
-    # # Step 5: Call LLM
-    # from openai import OpenAI
-    # client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    #
-    # response = client.chat.completions.create(
-    #     model="gpt-4o-mini",
-    #     messages=[
-    #         {"role": "system", "content": SYSTEM_PROMPT},
-    #         {"role": "user", "content": user_message}
-    #     ],
-    #     temperature=TEMPERATURE,
-    #     top_p=TOP_P,
-    # )
-    #
-    # answer = response.choices[0].message.content
-    #
-    # # Step 6: Return
-    # return {
-    #     "answer": answer,
-    #     "sources": chunks,
-    #     "retrieval_source": chunks[0].get("source", "hybrid") if chunks else "none"
-    # }
-    raise NotImplementedError("Implement generate_with_citation")
+    try:
+        try:
+            from .task9_retrieval_pipeline import retrieve
+        except ImportError:
+            from task9_retrieval_pipeline import retrieve
+        chunks = retrieve(query, top_k=top_k)
+    except Exception:
+        chunks = []
+    reordered = reorder_for_llm(chunks)
+    context = format_context(reordered)
+    retrieval_source = chunks[0].get("source", "hybrid") if chunks else "none"
+
+    if not chunks:
+        return {
+            "answer": "Tôi không thể xác minh thông tin này từ nguồn hiện có.",
+            "sources": [],
+            "retrieval_source": retrieval_source,
+        }
+
+    user_message = f"""Context:
+{context}
+
+---
+
+Question: {query}"""
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key:
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+            )
+            answer = response.choices[0].message.content
+        except Exception:
+            answer = "Tôi không thể xác minh thông tin này từ nguồn hiện có."
+    else:
+        source_names = []
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {})
+            source_names.append(metadata.get("source", "nguồn hiện có"))
+        citations = ", ".join(f"[{source}]" for source in source_names[:top_k])
+        answer = (
+            "Tôi đã tìm thấy các nguồn liên quan, nhưng chưa thể gọi LLM để "
+            f"tạo câu trả lời đầy đủ. Các nguồn có thể dùng để kiểm chứng: {citations}."
+        )
+
+    return {
+        "answer": answer,
+        "sources": chunks,
+        "retrieval_source": retrieval_source,
+    }
 
 
 if __name__ == "__main__":
